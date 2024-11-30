@@ -4,17 +4,21 @@
 #########################################################
 
 from openpyxl import Workbook
+from openpyxl.worksheet.worksheet import Worksheet
+from openpyxl.cell.cell import Cell, MergedCell
 from openpyxl import utils
 from openpyxl.styles import Border, Alignment, Side
 
 import click
 import re
-
+from io import TextIOWrapper
 
 @click.command()
 @click.argument('file', type=click.File('r')) #File is automatically closed
 @click.option('-o', 'output_file_name', metavar='<name>', help='output file (less extension)')
-def main(file, output_file_name):
+def main(
+    file:TextIOWrapper,
+    output_file_name:str):
     '''
     This script extracts the tables from file and writes the Excel version of them to the file specificed by -o.
     '''
@@ -28,7 +32,16 @@ def main(file, output_file_name):
 
     # Reads the latex file into memory
     inFile = file.read()
+    
+    # 找出所有的`\makecell{}`
+    makecell = re.findall(r'\\makecell{.*?}', inFile)
+    for item in makecell:
+        match = re.search(r'\\makecell{(.*?)}', item)
+        text = match.group(1).replace("\\\\", "\n").replace("\&", "and")
+        inFile = inFile.replace(item, text)
+    
     for idx, table in enumerate(re.findall(r'(\\begin{tabular}.*?\\end{tabular})', inFile, re.DOTALL)):  # Enumerating through all tables in the file
+        table:str = table.replace("\&", "and")
         col_pos_match = re.search(r'\\begin{tabular}{(.*?)}', table)
         col_pos = col_pos_match.group(1)
         total_col = col_pos.count("l") + col_pos.count("c") + col_pos.count("r")
@@ -43,6 +56,7 @@ def main(file, output_file_name):
         else:  # Creates a new worksheet for all following tables
             ws = wb.create_sheet(title="Table {}".format(str(idx + 1)))
         table = table.split(r"\\")
+        ws:Worksheet
         for line in table:
             curLine = line
 
@@ -62,6 +76,8 @@ def main(file, output_file_name):
                 curLoc = utils.cell.get_column_letter(col) + str(row)
                 if 'multicolumn' in item:
                     match = re.search(r'\\multicolumn{(.*?)}{(.*?)}{(.*)}', item)
+                    if match is None:
+                        print(item)
                     text = match.group(3)
                     span2 = 1  # This provides a default in case not nested
                     if 'multirow' in text:
@@ -83,7 +99,8 @@ def main(file, output_file_name):
                         align = "center"
                     else:
                         align = "right"
-                    ws[curLoc] = text
+                    if not isinstance(ws[curLoc], MergedCell):
+                        ws[curLoc] = text
                     ws[curLoc].alignment = Alignment(horizontal=align, vertical="center")
                     mergeLoc = utils.cell.get_column_letter(col + span - 1) + str(row + span2 - 1)
                     ws.merge_cells("{}:{}".format(curLoc, mergeLoc))
@@ -112,7 +129,8 @@ def main(file, output_file_name):
                         item = int(item)
                     except:
                         pass
-                    ws[curLoc] = item
+                    if not isinstance(ws[curLoc], MergedCell):
+                        ws[curLoc] = item
 
             # Applying borders to excel table
             if r"\midrule" in line or r"\toprule" in line or r"\bottomrule" in line or r"\hline" in line:
